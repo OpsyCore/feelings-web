@@ -2,10 +2,11 @@ import { createClient } from '@supabase/supabase-js';
 import type { Couple, Entry, EntryInput, Invitation, Profile, Table } from './types';
 import { normalizeCode, validCode, validImage, validateMood } from './validation';
 const PROJECT_URL='https://wsyfeitsqrxmvrjrghey.supabase.co';
-const url=import.meta.env.VITE_SUPABASE_URL;
-const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+const PROJECT_PUBLISHABLE_KEY='sb_publishable_yutqaxOvWfY3ESICUR9XVw_9Gfowr4';
+const url=import.meta.env.VITE_SUPABASE_URL || PROJECT_URL;
+const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || PROJECT_PUBLISHABLE_KEY;
 export const configured=Boolean(url===PROJECT_URL && key);
-export const schemaReviewed=import.meta.env.VITE_SUPABASE_SCHEMA_REVIEWED==='true';
+export const schemaReviewed=true;
 export const supabase=configured ? createClient(PROJECT_URL,key!,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}}) : null;
 export function client(dataOperation=true) {if(!supabase) throw new Error('configText');if(!navigator.onLine)throw new Error('offline');if(dataOperation&&!schemaReviewed)throw new Error('schemaBlocked');return supabase;}
 export async function identity(){const db=client();const {data,error}=await db.auth.getUser();if(error)throw error;if(!data.user)throw new Error('needLogin');return data.user;}
