@@ -16,10 +16,7 @@ export async function getContext():Promise<{profile:Profile|null;couple:Couple|n
  if(profileResult.error)throw profileResult.error;
  if(!profileResult.data){
   const metadataName=typeof user.user_metadata?.name==='string'?user.user_metadata.name.trim():'';
-  if(metadataName){
-   try { await saveProfile({name:metadataName}); profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle(); if(profileResult.error)throw profileResult.error; }
-   catch(error){ throw error; }
-  }
+  if(metadataName){await saveProfile({name:metadataName});profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle();if(profileResult.error)throw profileResult.error;}
  }
  const active=await db.rpc('active_couple_id');
  if(active.error)throw active.error;
@@ -34,26 +31,32 @@ export async function getContext():Promise<{profile:Profile|null;couple:Couple|n
  if(partnerId){const p=await db.from('profiles').select('id,name,avatar_path').eq('id',partnerId).maybeSingle();if(!p.error)partner=p.data as Profile|undefined;}
  return {profile:profileResult.data as Profile|null,couple:coupleResult.data?{...(coupleResult.data as Couple),partner}:null};
 }
-export async function listEntries(table:Table,coupleId?:string,offset=0):Promise<Entry[]> {const user=await identity();let query=client().from(table).select('*').order('created_at',{ascending:false}).range(offset,offset+29);if(table==='notifications')query=query.eq('user_id',user.id);else if(table==='cycle_logs')query=coupleId?query.or(`user_id.eq.${user.id},and(couple_id.eq.${coupleId},visibility.eq.partner)`):query.eq('user_id',user.id);else if(table==='moods')query=coupleId?query.or(`user_id.eq.${user.id},and(couple_id.eq.${coupleId},visibility.eq.partner)`):query.eq('user_id',user.id);else if(!coupleId)return [];else query=query.eq('couple_id',coupleId);const {data,error}=await query;if(error)throw error;return (data??[]) as Entry[];}
+export async function listEntries(table:Table,coupleId?:string,offset=0):Promise<Entry[]> {const user=await identity();let query=client().from(table).select('*').order('created_at',{ascending:false}).range(offset,offset+29);if(table==='notifications')query=query.eq('user_id',user.id);else if(table==='cycle_logs'||table==='moods')query=coupleId?query.or(`user_id.eq.${user.id},and(couple_id.eq.${coupleId},visibility.eq.partner)`):query.eq('user_id',user.id);else if(!coupleId)return [];else query=query.eq('couple_id',coupleId);const {data,error}=await query;if(error)throw error;return (data??[]) as Entry[];}
 const editable:Record<Table,(keyof EntryInput)[]>={moods:['text','emoji','visibility'],mood_reactions:['mood_id','emoji'],care_signals:['signal','emoji','text','receiver_id'],memories:['title','description','date','photo_path','location'],important_dates:['title','date','emoji','repeat_yearly','description'],calendar_events:['title','date','time','reminder_minutes','description'],diary_entries:['title','body','date','photo_path'],cycle_logs:['period_start','period_end','cycle_length','symptoms','notes','visibility'],notifications:[]};
 export async function saveEntry(table:Table,input:EntryInput,id?:string):Promise<Entry> {
  const user=await identity();const db=client();const acknowledgement=table==='care_signals'&&Boolean(id);const fields=acknowledgement?['read_at']:editable[table];if(table==='notifications')throw new Error('permission');
  if(table==='moods'&&input.text!==undefined){const issue=validateMood(input.text);if(issue)throw new Error(issue);}
  const payload=Object.fromEntries(Object.entries(input).filter(([key])=>fields.includes(key as keyof EntryInput)));
- if(!id){const {data:activeId,error}=await db.rpc('active_couple_id');if(error)throw error;const active=activeId?{id:activeId} as Couple:null;const personal=table==='moods'||table==='cycle_logs';if(!personal&&!active)throw new Error('needPartner');if(input.visibility==='partner'&&!active?.partner)throw new Error('needPartner');if(input.couple_id&&input.couple_id!==active?.id)throw new Error('permission');if(active)payload.couple_id=active.id;payload.user_id=user.id;if(table==='care_signals'){if(!active)throw new Error('needPartner');const member=await db.from('couple_members').select('user_id').eq('couple_id',active.id).neq('user_id',user.id).limit(1);if(member.error)throw member.error;const partnerId=member.data?.[0]?.user_id;if(!partnerId||input.receiver_id!==partnerId)throw new Error('needPartner');payload.sender_id=user.id;}}
+ if(!id){const {data:activeId,error}=await db.rpc('active_couple_id');if(error)throw error;const coupleId=activeId as string|null;const personal=table==='moods'||table==='cycle_logs';if(!personal&&!coupleId)throw new Error('needPartner');if(input.visibility==='partner'){
+   if(!coupleId)throw new Error('needPartner');
+   const member=await db.from('couple_members').select('user_id').eq('couple_id',coupleId).neq('user_id',user.id).limit(1);
+   if(member.error)throw member.error;
+   if(!member.data?.[0]?.user_id)throw new Error('needPartner');
+ }
+ if(input.couple_id&&input.couple_id!==coupleId)throw new Error('permission');
+ if(coupleId)payload.couple_id=coupleId;payload.user_id=user.id;
+ if(table==='care_signals'){
+   if(!coupleId)throw new Error('needPartner');
+   const member=await db.from('couple_members').select('user_id').eq('couple_id',coupleId).neq('user_id',user.id).limit(1);
+   if(member.error)throw member.error;
+   const partnerId=member.data?.[0]?.user_id;
+   if(!partnerId||input.receiver_id!==partnerId)throw new Error('needPartner');
+   payload.sender_id=user.id;
+ }}
  let query;if(id)query=db.from(table).update(payload).eq('id',id).eq(acknowledgement?'receiver_id':'user_id',user.id);else query=db.from(table).insert(payload);const {data,error}=await query.select().single();if(error)throw error;return data as Entry;
 }
 export async function removeEntry(table:Table,id:string) {const user=await identity();const {data,error}=await client().from(table).delete().eq('id',id).eq('user_id',user.id).select('id');if(error)throw error;if(!data?.length)throw new Error('permission');}
-export async function createInvitation():Promise<Invitation> {
- await identity();
- const {data,error}=await client().rpc('create_couple');
- if(error)throw error;
- const row=(Array.isArray(data)?data[0]:data) as Record<string,unknown>|null;
- const code=String(row?.code ?? row?.invite_code ?? '');
- const expires=String(row?.expires_at ?? row?.invite_expires_at ?? '');
- if(!/^\d{6}$/.test(code)||!expires)throw new Error('invite_not_available');
- return {code,expires_at:expires};
-}
+export async function createInvitation():Promise<Invitation> {await identity();const {data,error}=await client().rpc('create_couple');if(error)throw error;const row=(Array.isArray(data)?data[0]:data) as Record<string,unknown>|null;const code=String(row?.code ?? row?.invite_code ?? '');const expires=String(row?.expires_at ?? row?.invite_expires_at ?? '');if(!/^\d{6}$/.test(code)||!expires)throw new Error('invite_not_available');return {code,expires_at:expires};}
 export async function joinInvitation(code:string) {if(!validCode(code))throw new Error('invalidCode');await identity();const {error}=await client().rpc('join_couple',{p_code:normalizeCode(code)});if(error)throw error;}
 export async function disconnectCouple(){await identity();const {error}=await client().rpc('disconnect_couple');if(error)throw error;}
 export async function uploadImage(file:File,scope:string,bucket='couple-media') {if(!validImage(file))throw new Error('uploadError');const user=await identity();if(bucket==='avatars'&&scope!==user.id)throw new Error('permission');if(bucket==='couple-media'){const {data,error}=await client().rpc('active_couple_id');if(error)throw error;if(!data||data!==scope)throw new Error('permission');}const path=`${scope}/${user.id}/${crypto.randomUUID()}.${file.type.split('/')[1]}`;const {error}=await client().storage.from(bucket).upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;return path;}
