@@ -1,0 +1,58 @@
+import { createClient } from '@supabase/supabase-js';
+import type { Couple, Entry, EntryInput, Invitation, Profile, Table } from './types';
+import { normalizeCode, validCode, validImage, validateMood } from './validation';
+const PROJECT_URL='https://wsyfeitsqrxmvrjrghey.supabase.co';
+const url=import.meta.env.VITE_SUPABASE_URL;
+const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+export const configured=Boolean(url===PROJECT_URL && key);
+export const schemaReviewed=import.meta.env.VITE_SUPABASE_SCHEMA_REVIEWED==='true';
+export const supabase=configured ? createClient(PROJECT_URL,key!,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}}) : null;
+export function client(dataOperation=true) {if(!supabase) throw new Error('configText');if(!navigator.onLine)throw new Error('offline');if(dataOperation&&!schemaReviewed)throw new Error('schemaBlocked');return supabase;}
+export async function identity(){const db=client();const {data,error}=await db.auth.getUser();if(error)throw error;if(!data.user)throw new Error('needLogin');return data.user;}
+export async function getContext():Promise<{profile:Profile|null;couple:Couple|null}> {
+ const user=await identity(); const db=client();
+ const profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle();
+ if(profileResult.error)throw profileResult.error;
+ const active=await db.rpc('active_couple_id');
+ if(active.error)throw active.error;
+ const coupleId=active.data as string|null;
+ if(!coupleId)return {profile:profileResult.data as Profile|null,couple:null};
+ const coupleResult=await db.from('couples').select('*').eq('id',coupleId).maybeSingle();
+ if(coupleResult.error)throw coupleResult.error;
+ const members=await db.from('couple_members').select('user_id').eq('couple_id',coupleId).neq('user_id',user.id).limit(1);
+ if(members.error)throw members.error;
+ const partnerId=members.data?.[0]?.user_id as string|undefined;
+ let partner:Profile|undefined;
+ if(partnerId){const p=await db.from('profiles').select('id,name,avatar_path').eq('id',partnerId).maybeSingle();if(!p.error)partner=p.data as Profile|undefined;}
+ return {profile:profileResult.data as Profile|null,couple:coupleResult.data?{...(coupleResult.data as Couple),partner}:null};
+}
+export async function listEntries(table:Table,coupleId?:string,offset=0):Promise<Entry[]> {const user=await identity();let query=client().from(table).select('*').order('created_at',{ascending:false}).range(offset,offset+29);if(table==='notifications')query=query.eq('user_id',user.id);else if(table==='cycle_logs')query=coupleId?query.or(`user_id.eq.${user.id},and(couple_id.eq.${coupleId},visibility.eq.partner)`):query.eq('user_id',user.id);else if(table==='moods')query=coupleId?query.or(`user_id.eq.${user.id},and(couple_id.eq.${coupleId},visibility.eq.partner)`):query.eq('user_id',user.id);else if(!coupleId)return [];else query=query.eq('couple_id',coupleId);const {data,error}=await query;if(error)throw error;return (data??[]) as Entry[];}
+const editable:Record<Table,(keyof EntryInput)[]>={moods:['text','emoji','visibility'],mood_reactions:['mood_id','emoji'],care_signals:['signal','emoji','text','receiver_id'],memories:['title','description','date','photo_path','location'],important_dates:['title','date','emoji','repeat_yearly','description'],calendar_events:['title','date','time','reminder_minutes','description'],diary_entries:['title','body','date','photo_path'],cycle_logs:['period_start','period_end','cycle_length','symptoms','notes','visibility'],notifications:[]};
+export async function saveEntry(table:Table,input:EntryInput,id?:string):Promise<Entry> {
+ const user=await identity();const db=client();const acknowledgement=table==='care_signals'&&Boolean(id);const fields=acknowledgement?['read_at']:editable[table];if(table==='notifications')throw new Error('permission');
+ if(table==='moods'&&input.text!==undefined){const issue=validateMood(input.text);if(issue)throw new Error(issue);}
+ const payload=Object.fromEntries(Object.entries(input).filter(([key])=>fields.includes(key as keyof EntryInput)));
+ if(!id){const {data:activeId,error}=await db.rpc('active_couple_id');if(error)throw error;const active=activeId?{id:activeId} as Couple:null;const personal=table==='moods'||table==='cycle_logs';if(!personal&&!active)throw new Error('needPartner');if(input.visibility==='partner'&&!active?.partner)throw new Error('needPartner');if(input.couple_id&&input.couple_id!==active?.id)throw new Error('permission');if(active)payload.couple_id=active.id;payload.user_id=user.id;if(table==='care_signals'){if(!active)throw new Error('needPartner');const member=await db.from('couple_members').select('user_id').eq('couple_id',active.id).neq('user_id',user.id).limit(1);if(member.error)throw member.error;const partnerId=member.data?.[0]?.user_id;if(!partnerId||input.receiver_id!==partnerId)throw new Error('needPartner');payload.sender_id=user.id;}}
+ let query;if(id)query=db.from(table).update(payload).eq('id',id).eq(acknowledgement?'receiver_id':'user_id',user.id);else query=db.from(table).insert(payload);const {data,error}=await query.select().single();if(error)throw error;return data as Entry;
+}
+export async function removeEntry(table:Table,id:string) {const user=await identity();const {data,error}=await client().from(table).delete().eq('id',id).eq('user_id',user.id).select('id');if(error)throw error;if(!data?.length)throw new Error('permission');}
+export async function createInvitation():Promise<Invitation> {
+ await identity();
+ const {data,error}=await client().rpc('create_couple');
+ if(error)throw error;
+ const row=(Array.isArray(data)?data[0]:data) as Record<string,unknown>|null;
+ const code=String(row?.code ?? row?.invite_code ?? '');
+ const expires=String(row?.expires_at ?? row?.invite_expires_at ?? '');
+ if(!/^\d{6}$/.test(code)||!expires)throw new Error('invite_not_available');
+ return {code,expires_at:expires};
+}
+export async function joinInvitation(code:string) {if(!validCode(code))throw new Error('invalidCode');await identity();const {error}=await client().rpc('join_couple',{p_code:normalizeCode(code)});if(error)throw error;}
+export async function disconnectCouple(){await identity();const {error}=await client().rpc('disconnect_couple');if(error)throw error;}
+export async function uploadImage(file:File,scope:string,bucket='couple-media') {if(!validImage(file))throw new Error('uploadError');const user=await identity();if(bucket==='avatars'&&scope!==user.id)throw new Error('permission');if(bucket==='couple-media'){const {data,error}=await client().rpc('active_couple_id');if(error)throw error;if(!data||data!==scope)throw new Error('permission');}const path=`${scope}/${user.id}/${crypto.randomUUID()}.${file.type.split('/')[1]}`;const {error}=await client().storage.from(bucket).upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;return path;}
+export async function signedImage(path:string,bucket='couple-media') {const {data,error}=await client().storage.from(bucket).createSignedUrl(path,1800);if(error)throw error;return data.signedUrl;}
+export async function saveProfile(input:Partial<Profile>){const user=await identity();const {data,error}=await client().from('profiles').upsert({...input,id:user.id}).select().single();if(error)throw error;return data as Profile;}
+export async function markRead(id?:string){const user=await identity();let q=client().from('notifications').update({read_at:new Date().toISOString()}).eq('user_id',user.id).is('read_at',null);if(id)q=q.eq('id',id);const {error}=await q;if(error)throw error;}
+const preferenceKeys={notification_preferences:['moods','reactions','care','dates','memories','diary'],privacy_settings:['mood_visibility']};
+export async function savePreferences(table:'notification_preferences'|'privacy_settings',values:Record<string,boolean|string>){const user=await identity();const allowed=Object.fromEntries(Object.entries(values).filter(([key])=>preferenceKeys[table].includes(key)));const {error}=await client().from(table).upsert({...allowed,user_id:user.id});if(error)throw error;}
+export async function getPreferences(table:'notification_preferences'|'privacy_settings'){const user=await identity();const {data,error}=await client().from(table).select('*').eq('user_id',user.id).maybeSingle();if(error)throw error;return data as Record<string,boolean|string>|null;}
+export async function deleteAccount(){await identity();const {error}=await client().rpc('delete_my_account');if(error)throw error;await client(false).auth.signOut();}
