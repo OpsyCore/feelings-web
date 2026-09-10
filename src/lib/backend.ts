@@ -12,8 +12,15 @@ export function client(dataOperation=true) {if(!supabase) throw new Error('confi
 export async function identity(){const {data,error}=await client().auth.getUser();if(error)throw error;if(!data.user)throw new Error('needLogin');return data.user;}
 export async function getContext():Promise<{profile:Profile|null;couple:Couple|null}> {
  const user=await identity(); const db=client();
- const profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle();
+ let profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle();
  if(profileResult.error)throw profileResult.error;
+ if(!profileResult.data){
+  const metadataName=typeof user.user_metadata?.name==='string'?user.user_metadata.name.trim():'';
+  if(metadataName){
+   try { await saveProfile({name:metadataName}); profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle(); if(profileResult.error)throw profileResult.error; }
+   catch(error){ throw error; }
+  }
+ }
  const active=await db.rpc('active_couple_id');
  if(active.error)throw active.error;
  const coupleId=active.data as string|null;
@@ -51,7 +58,7 @@ export async function joinInvitation(code:string) {if(!validCode(code))throw new
 export async function disconnectCouple(){await identity();const {error}=await client().rpc('disconnect_couple');if(error)throw error;}
 export async function uploadImage(file:File,scope:string,bucket='couple-media') {if(!validImage(file))throw new Error('uploadError');const user=await identity();if(bucket==='avatars'&&scope!==user.id)throw new Error('permission');if(bucket==='couple-media'){const {data,error}=await client().rpc('active_couple_id');if(error)throw error;if(!data||data!==scope)throw new Error('permission');}const path=`${scope}/${user.id}/${crypto.randomUUID()}.${file.type.split('/')[1]}`;const {error}=await client().storage.from(bucket).upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;return path;}
 export async function signedImage(path:string,bucket='couple-media') {const {data,error}=await client().storage.from(bucket).createSignedUrl(path,1800);if(error)throw error;return data.signedUrl;}
-export async function saveProfile(input:Partial<Profile>){const user=await identity();const payload:Record<string,unknown>={...input,id:user.id};if(typeof input.name==='string'&&input.name.trim())payload.display_name=input.name.trim();const {data,error}=await client().from('profiles').upsert(payload,{onConflict:'id'}).select('*').single();if(error)throw error;return data as Profile;}
+export async function saveProfile(input:Partial<Profile>){const user=await identity();const name=typeof input.name==='string'?input.name.trim():'';const payload:Record<string,unknown>={id:user.id};if(name) {payload.name=name;payload.display_name=name;}if(input.birthday!==undefined)payload.birthday=input.birthday;if(input.avatar_path!==undefined)payload.avatar_path=input.avatar_path;if(input.language!==undefined)payload.language=input.language;if(input.theme!==undefined)payload.theme=input.theme;const {data,error}=await client().from('profiles').upsert(payload,{onConflict:'id'}).select('*').single();if(error)throw error;return data as Profile;}
 export async function ensureProfile(name?:string){const user=await identity();const existing=await client().from('profiles').select('id,name,display_name,avatar_path,birthday,language,theme').eq('id',user.id).maybeSingle();if(existing.error)throw existing.error;if(existing.data)return existing.data as Profile;const metadataName=typeof user.user_metadata?.name==='string'?user.user_metadata.name.trim():'';const profileName=(name??metadataName).trim();if(!profileName)throw new Error('missingProfileName');return saveProfile({name:profileName});}
 export async function markRead(id?:string){const user=await identity();let q=client().from('notifications').update({read_at:new Date().toISOString()}).eq('user_id',user.id).is('read_at',null);if(id)q=q.eq('id',id);const {error}=await q;if(error)throw error;}
 const preferenceKeys={notification_preferences:['moods','reactions','care','dates','memories','diary'],privacy_settings:['mood_visibility']};
