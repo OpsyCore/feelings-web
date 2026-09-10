@@ -2,14 +2,14 @@ import { createClient } from '@supabase/supabase-js';
 import type { Couple, Entry, EntryInput, Invitation, Profile, Table } from './types';
 import { normalizeCode, validCode, validImage, validateMood } from './validation';
 const PROJECT_URL='https://wsyfeitsqrxmvrjrghey.supabase.co';
-const PROJECT_PUBLISHABLE_KEY='sb_publishable_yutqaxOvWfY3ESICUR9XVw_9Gfowr4';
+const PROJECT_PUBLISHABLE_KEY='sb_publishable_yutqaxOvWfY3ESICUR9XV_9Gfowr4';
 const url=import.meta.env.VITE_SUPABASE_URL || PROJECT_URL;
 const key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || PROJECT_PUBLISHABLE_KEY;
 export const configured=Boolean(url===PROJECT_URL && key);
 export const schemaReviewed=true;
 export const supabase=configured ? createClient(PROJECT_URL,key!,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}}) : null;
 export function client(dataOperation=true) {if(!supabase) throw new Error('configText');if(!navigator.onLine)throw new Error('offline');if(dataOperation&&!schemaReviewed)throw new Error('schemaBlocked');return supabase;}
-export async function identity(){const db=client();const {data,error}=await db.auth.getUser();if(error)throw error;if(!data.user)throw new Error('needLogin');return data.user;}
+export async function identity(){const {data,error}=await client().auth.getUser();if(error)throw error;if(!data.user)throw new Error('needLogin');return data.user;}
 export async function getContext():Promise<{profile:Profile|null;couple:Couple|null}> {
  const user=await identity(); const db=client();
  const profileResult=await db.from('profiles').select('*').eq('id',user.id).maybeSingle();
@@ -51,7 +51,8 @@ export async function joinInvitation(code:string) {if(!validCode(code))throw new
 export async function disconnectCouple(){await identity();const {error}=await client().rpc('disconnect_couple');if(error)throw error;}
 export async function uploadImage(file:File,scope:string,bucket='couple-media') {if(!validImage(file))throw new Error('uploadError');const user=await identity();if(bucket==='avatars'&&scope!==user.id)throw new Error('permission');if(bucket==='couple-media'){const {data,error}=await client().rpc('active_couple_id');if(error)throw error;if(!data||data!==scope)throw new Error('permission');}const path=`${scope}/${user.id}/${crypto.randomUUID()}.${file.type.split('/')[1]}`;const {error}=await client().storage.from(bucket).upload(path,file,{upsert:false,contentType:file.type});if(error)throw error;return path;}
 export async function signedImage(path:string,bucket='couple-media') {const {data,error}=await client().storage.from(bucket).createSignedUrl(path,1800);if(error)throw error;return data.signedUrl;}
-export async function saveProfile(input:Partial<Profile>){const user=await identity();const {data,error}=await client().from('profiles').upsert({...input,id:user.id}).select().single();if(error)throw error;return data as Profile;}
+export async function saveProfile(input:Partial<Profile>){const user=await identity();const payload:Record<string,unknown>={...input,id:user.id};if(typeof input.name==='string'&&input.name.trim())payload.display_name=input.name.trim();const {data,error}=await client().from('profiles').upsert(payload,{onConflict:'id'}).select('*').single();if(error)throw error;return data as Profile;}
+export async function ensureProfile(name?:string){const user=await identity();const existing=await client().from('profiles').select('id,name,display_name,avatar_path,birthday,language,theme').eq('id',user.id).maybeSingle();if(existing.error)throw existing.error;if(existing.data)return existing.data as Profile;const metadataName=typeof user.user_metadata?.name==='string'?user.user_metadata.name.trim():'';const profileName=(name??metadataName).trim();if(!profileName)throw new Error('missingProfileName');return saveProfile({name:profileName});}
 export async function markRead(id?:string){const user=await identity();let q=client().from('notifications').update({read_at:new Date().toISOString()}).eq('user_id',user.id).is('read_at',null);if(id)q=q.eq('id',id);const {error}=await q;if(error)throw error;}
 const preferenceKeys={notification_preferences:['moods','reactions','care','dates','memories','diary'],privacy_settings:['mood_visibility']};
 export async function savePreferences(table:'notification_preferences'|'privacy_settings',values:Record<string,boolean|string>){const user=await identity();const allowed=Object.fromEntries(Object.entries(values).filter(([key])=>preferenceKeys[table].includes(key)));const {error}=await client().from(table).upsert({...allowed,user_id:user.id});if(error)throw error;}
