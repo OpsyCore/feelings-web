@@ -30,7 +30,7 @@ test('all main routes render without page exceptions',async({page})=>{
 test('language and theme settings change real document state',async({page})=>{
   await page.goto('/#settings');
   await dismissOnboarding(page);
-  await page.getByRole('button',{name:'تاریک',exact:true}).click();
+  await page.locator('.settings-content').getByRole('button',{name:'تاریک',exact:true}).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
   await page.locator('.settings-navigation').getByRole('button',{name:'زبان',exact:true}).click();
   await page.locator('.language-options').getByRole('button',{name:'English Left to right'}).click();
