@@ -2,6 +2,13 @@ import {test,expect} from '@playwright/test';
 
 const routes=['home','feelings','moments','care','memories','dates','calendar','diary','cycle','coupleCare','partner','profile','settings','notifications'];
 
+async function dismissOnboarding(page:Parameters<Parameters<typeof test>[1]>[0]['page']){
+  const onboarding=page.locator('.onboarding');
+  if(await onboarding.isVisible().catch(()=>false)){
+    await onboarding.getByRole('button').last().click();
+  }
+}
+
 test('application shell renders in Persian RTL',async({page})=>{
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('dir','rtl');
@@ -22,6 +29,7 @@ test('all main routes render without page exceptions',async({page})=>{
 
 test('language and theme settings change real document state',async({page})=>{
   await page.goto('/#settings');
+  await dismissOnboarding(page);
   await page.getByRole('button',{name:'تاریک',exact:true}).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
   await page.locator('.settings-navigation').getByRole('button',{name:'زبان',exact:true}).click();
@@ -34,6 +42,7 @@ test('language and theme settings change real document state',async({page})=>{
 
 test('editor protects a typed draft',async({page})=>{
   await page.goto('/#diary');
+  await dismissOnboarding(page);
   await page.locator('.page-toolbar').getByRole('button',{name:'صفحه‌ی تازه'}).click();
   await page.getByLabel('عنوان',{exact:true}).fill('یادداشت شخصی');
   await page.getByRole('button',{name:'بستن',exact:true}).click();
@@ -44,6 +53,7 @@ test('editor protects a typed draft',async({page})=>{
 
 test('calendar moves between months',async({page})=>{
   await page.goto('/#calendar');
+  await dismissOnboarding(page);
   const before=await page.locator('.calendar-head h2').textContent();
   await page.getByRole('button',{name:'بعدی',exact:true}).click();
   await expect(page.locator('.calendar-head h2')).not.toHaveText(before!);
