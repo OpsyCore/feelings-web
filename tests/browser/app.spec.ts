@@ -1,8 +1,8 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Page} from '@playwright/test';
 
 const routes=['home','feelings','moments','care','memories','dates','calendar','diary','cycle','coupleCare','partner','profile','settings','notifications'];
 
-async function dismissOnboarding(page:Parameters<Parameters<typeof test>[1]>[0]['page']){
+async function dismissOnboarding(page:Page){
   const onboarding=page.locator('.onboarding');
   if(await onboarding.isVisible().catch(()=>false)){
     await onboarding.getByRole('button').last().click();
