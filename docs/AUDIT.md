@@ -32,6 +32,26 @@ Current classification: **PARTIAL — implemented web UI and guarded Supabase cl
 - Dependency installation reported **two advisories (one low, one high)**. Exact affected packages and remediation still need `npm audit` in a command-capable environment. Do not call the dependency audit clean.
 - Production CSP, security headers, asset hosting, and rate limiting remain deployment responsibilities.
 
+## Remote verification (2026-09-28, operator-executed read-only catalog queries)
+- Confirmed: the five client RPCs exist with matching signatures; migrations 0003 and 0004 were applied remotely; an older client generation shares the schema.
+- Confirmed breaking client/schema mismatches (legacy NOT NULL columns) and fixed them client-side in `enrichInsertPayload`, with unit tests.
+- Confirmed RLS defects (private-mood exposure via `moods_members`, owner couple_id reassignment, reactions on private moods, missing partner cycle-read, disconnect trap) and authored reviewed migration `0006_web_reconciliation.sql`; it has NOT been applied.
+- Verified 2026-09-28 (second inspection round): `anon` holds no SELECT/INSERT/UPDATE/DELETE on any table except default `profiles` grants, and RLS policies reduce anon to zero rows; `authenticated` DML grants on `invitations`, `couple_members` and `couples` are neutralized because no permissive policy exists for those commands; the five product RPCs are EXECUTE-granted to `authenticated` only (`active_couple_id` also to `anon`, harmless: it derives from auth.uid()); both storage buckets are private with size and MIME limits matching the contract.
+- Verified gaps fixed by migrations: `supabase_realtime` did not publish `couple_members`, `couples`, `profiles` or `cycle_logs`, so joins, profile edits and shared cycle updates could never arrive live (0006 section G); no notification trigger existed anywhere, so in-app notifications could never fire (0007 adds preference- and locale-aware triggers); trigger functions were EXECUTE-granted to client roles (0006 section H revokes).
+- Row estimates are all -1 (never analyzed / effectively empty), so adding constraints now carries no backfill risk.
+- Remaining UNVERIFIED: replica identity for realtime UPDATE payloads, storage object policies beyond bucket privacy, and end-to-end notification delivery after 0007 is applied.
+
+## Migrations applied and post-applied verification (2026-09-28)
+0006, 0007 and 0008 were applied to the live project by the operator and re-verified with read-only catalog queries:
+- defaults and nullability landed (moods.title/client_event_id, mood_reactions.kind, important_dates.kind/created_by, moods.couple_id nullable, profiles.birthday, theme default 'system');
+- mood_reactions unique (mood_id,user_id) exists;
+- trigger functions and emit_notification are no longer EXECUTE-able by anon/authenticated;
+- the four *_web_update owner policies now pin couple_id to the active couple (0008; the 0006 DO block for them had silently not taken effect, caught by post-apply verification);
+- all seven emit_notification triggers exist;
+- supabase_realtime now publishes every table the client subscribes to;
+- replica identity is default (primary key) everywhere except important_dates=full, which is sufficient for postgres_changes.
+Backend contract, RLS hardening, realtime publication and notification triggers are therefore VERIFIED as applied. End-to-end realtime delivery and cross-account isolation remain UNVERIFIED until the two-browser acceptance suite is actually executed with dedicated accounts.
+
 ## Blockers
 1. Missing browser publishable/anon key and configured project URL.
 2. Missing read-only access to the existing remote schema, functions, policies, publication, triggers, and buckets (or a redacted inspection export).

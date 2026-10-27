@@ -16,4 +16,13 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  // Bind to all interfaces so the app can be served from a container/sandbox preview.
+  server: {
+    host: "0.0.0.0",
+    allowedHosts: [".e2b.app"],
+  },
+  preview: {
+    host: "0.0.0.0",
+    allowedHosts: [".e2b.app"],
+  },
 });

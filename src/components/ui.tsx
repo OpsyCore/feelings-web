@@ -1,7 +1,8 @@
-import {useEffect,useRef,useState,type ReactNode,type ButtonHTMLAttributes} from 'react';
+import {useCallback,useEffect,useRef,useState,type ReactNode,type ButtonHTMLAttributes} from 'react';
 import {X,Heart,ArrowLeft,ArrowRight,LoaderCircle,ShieldCheck,CloudOff,Plus,Image as ImageIcon} from 'lucide-react';
 import {useApp} from '../lib/context';
-import {configured,schemaReviewed,signedImage} from '../lib/backend';
+import {configured,keyFingerprint,projectUrl,schemaReviewed,signedImage} from '../lib/backend';
+import {formatReport,probeBackend,type Report} from '../lib/diagnostics';
 export function Button({children,variant='primary',className='',busy=false,...props}:ButtonHTMLAttributes<HTMLButtonElement>&{variant?:'primary'|'secondary'|'ghost'|'danger';busy?:boolean}){return <button {...props} disabled={props.disabled||busy} className={`btn btn-${variant} ${className}`} aria-busy={busy}>{busy&&<LoaderCircle size={17} className="spin"/>}{children}</button>;}
 export function IconButton({label,children,onClick,className=''}:{label:string;children:ReactNode;onClick:()=>void;className?:string}){return <button type="button" className={`icon-button ${className}`} title={label} aria-label={label} onClick={onClick}>{children}</button>;}
 export function Card({children,className=''}:{children:ReactNode;className?:string}){return <section className={`card ${className}`}>{children}</section>;}
@@ -10,7 +11,24 @@ export function SectionHeading({title,subtitle,action,onAction,icon}:{title:stri
 export function EmptyState({icon,title,text,action,onAction,compact=false}:{icon?:ReactNode;title:string;text:string;action?:string;onAction?:()=>void;compact?:boolean}){return <div className={`empty-state ${compact?'compact':''}`}><div className="empty-icon">{icon??<Heart size={27} strokeWidth={1.4}/>}</div><h3>{title}</h3><p>{text}</p>{action&&<Button variant="secondary" onClick={onAction}><Plus size={16}/>{action}</Button>}</div>;}
 export function Modal({title,children,onClose,wide=false}:{title:string;children:ReactNode;onClose:()=>void;wide?:boolean}){const {t}=useApp();const ref=useRef<HTMLDivElement>(null);const callback=useRef(onClose);callback.current=onClose;useEffect(()=>{const prev=document.activeElement as HTMLElement;const old=document.body.style.overflow;document.body.style.overflow='hidden';const timer=setTimeout(()=>ref.current?.querySelector<HTMLElement>('input,button,select,textarea')?.focus(),30);const keyboard=(event:KeyboardEvent)=>{if(event.key==='Escape')callback.current();if(event.key==='Tab'){const els=Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex="0"]')??[]);const first=els[0],last=els[els.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}};document.addEventListener('keydown',keyboard);return()=>{clearTimeout(timer);document.body.style.overflow=old;document.removeEventListener('keydown',keyboard);prev?.focus();};},[]);return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}><div className={`modal ${wide?'wide':''}`} ref={ref} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-head"><h2 id="dialog-title">{title}</h2><IconButton label={t('close')} onClick={onClose}><X size={20}/></IconButton></div>{children}</div></div>;}
 export function ConfigNotice({compact=false}:{compact?:boolean}){const {t}=useApp();if(configured&&schemaReviewed)return null;return <div className={`config-notice ${compact?'compact':''}`}><CloudOff size={18}/><div><strong>{t('configTitle')}</strong>{!compact&&<p>{t(configured?'schemaBlocked':'configText')}</p>}</div></div>;}
-export function ConfigDetails(){const {t}=useApp();return <div className="config-details"><ConfigNotice/><p>{t('configTechnical')}</p><code dir="ltr">VITE_SUPABASE_URL<br/>VITE_SUPABASE_PUBLISHABLE_KEY<br/>VITE_SUPABASE_SCHEMA_REVIEWED</code></div>;}
+export function ConfigDetails(){const {t,notify}=useApp();const [report,setReport]=useState<Report|null>(null);const [busy,setBusy]=useState(true);
+ const check=useCallback(async()=>{setBusy(true);const result=await probeBackend();setReport(result);setBusy(false);},[]);
+ useEffect(()=>{void check();},[check]);
+ const failed=report?.probes.filter(probe=>probe.state==='fail')??[];
+ const attention=report?.probes.filter(probe=>probe.state==='warn'||probe.state==='skip')??[];
+ const verdict=report?(failed.length?'error':report.counts.warn||report.counts.skip?'warn':'ok'):'checking';
+ const verdictText=report?(failed.length?'connectionIssues':report.counts.warn||report.counts.skip?'connectionPartial':'connected'):'checking';
+ return <div className="config-details"><ConfigNotice/>
+  <div className={`connection-status ${verdict}`} role="status"><span className="connection-dot" aria-hidden="true"/>
+   <div className="connection-copy"><strong>{t('connectionStatus')}</strong><small>{t(verdictText)}</small>
+    {report&&<span className="connection-counts" dir="ltr">✓ {report.counts.pass} · ! {report.counts.warn} · ✕ {report.counts.fail} · ? {report.counts.skip}</span>}</div>
+   <Button variant="ghost" busy={busy} onClick={()=>void check()}>{t('recheck')}</Button></div>
+  {failed.length>0&&<ul className="probe-list fail">{failed.map(probe=><li key={probe.id}><span className="probe-dot" aria-hidden="true"/><code dir="ltr">{probe.label}</code><small>{t(probe.detail??'missing')}</small></li>)}</ul>}
+  {attention.length>0&&<ul className="probe-list warn">{attention.map(probe=><li key={probe.id}><span className="probe-dot" aria-hidden="true"/><code dir="ltr">{probe.label}</code><small>{t(probe.detail??'needsReview')}</small></li>)}</ul>}
+  <div className="button-row"><Button variant="secondary" disabled={!report} onClick={()=>void navigator.clipboard?.writeText(report?formatReport(report):'').then(()=>notify(t('copied'))).catch(()=>notify(t('permission'),'error'))}>{t('copyReport')}</Button></div>
+  <p>{t('configTechnical')}</p>
+  <code dir="ltr">VITE_SUPABASE_URL = {projectUrl||t('missing')}<br/>VITE_SUPABASE_PUBLISHABLE_KEY = {keyFingerprint||t('missing')}<br/>VITE_SUPABASE_SCHEMA_REVIEWED = {schemaReviewed?'true':'false'}{report?.auth?`<br/>auth: signup ${report.auth.signupDisabled?'disabled':'open'} · autoconfirm ${report.auth.autoconfirm?'on':'off'}`:''}</code>
+ </div>;}
 export function PrivacyNote(){const {t}=useApp();return <span className="privacy-note"><ShieldCheck size={14}/>{t('privateSpace')}</span>;}
 export function Skeleton(){const {t}=useApp();return <div className="skeleton-list" role="status" aria-label={t('loading')}><div/><div/><div/></div>;}
 export function Tabs({values,value,onChange}:{values:{id:string;label:string}[];value:string;onChange:(value:string)=>void}){return <div className="tabs" role="tablist">{values.map(item=><button key={item.id} type="button" role="tab" aria-selected={value===item.id} className={value===item.id?'active':''} onClick={()=>onChange(item.id)}>{item.label}</button>)}</div>;}

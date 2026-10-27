@@ -1,0 +1,27 @@
+FEELINGS is a private, safe little corner for two — for couples who want to know how the other feels every day and keep the relationship fresh with small gestures. A little closer, even from afar.
+
+Every day starts with one feeling: record your mood in a few taps, your partner sees it in real time and can react or send a little "care" gesture — from "drink some water" to "sending a hug".
+
+Features:
+
+• Daily feeling check-ins with live partner reactions and feedback
+• Care gestures: ready-made little messages, from health to emotional support
+• Moments and memories: photos and notes that stay between the two of you
+• Shared diary: write your story in your own words
+• Important dates and anniversaries with reminders, plus a two-person calendar
+• Plan dates and shared events together
+• A personal, private space to log your cycle and symptoms (private by default)
+• Easy pairing with a six-digit invite code or QR scan
+• Notifications with per-section preferences
+• Full Persian (and English) interface, dark mode, and a little daily idea
+
+Privacy:
+
+• Every couple's space is fully isolated; nobody but you two can see your data
+• All traffic is encrypted (HTTPS)
+• No ads, no third-party trackers, no selling of data
+• Deleting your account removes your personal data and files
+
+FEELINGS is a progressive web app published as an Android package: always up to date, fast and light. To get started, both partners sign up with their own accounts and connect with an invite code.
+
+Love lives in the little things.

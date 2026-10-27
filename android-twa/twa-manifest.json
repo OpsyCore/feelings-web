@@ -1,0 +1,35 @@
+{
+  "packageId": "app.feelings.android",
+  "host": "opsycore.github.io",
+  "name": "FEELINGS — دو نفر، یک احساس",
+  "launcherName": "FEELINGS",
+  "display": "standalone",
+  "themeColor": "#faf8f5",
+  "themeColorDark": "#1c1917",
+  "navigationColor": "#faf8f5",
+  "navigationColorDark": "#1c1917",
+  "navigationDividerColor": "#faf8f5",
+  "navigationDividerColorDark": "#1c1917",
+  "backgroundColor": "#faf8f5",
+  "enableNotifications": false,
+  "startUrl": "/feelings-web/",
+  "webManifestUrl": "https://opsycore.github.io/feelings-web/manifest.webmanifest",
+  "iconUrl": "https://opsycore.github.io/feelings-web/icons/icon-512.png",
+  "maskableIconUrl": "https://opsycore.github.io/feelings-web/icons/icon-512.png",
+  "shortcuts": [],
+  "generatorApp": "bubblewrap",
+  "appVersion": "1.0.0",
+  "appVersionCode": 1,
+  "signingKey": {
+    "path": "./feelings.keystore",
+    "alias": "feelings"
+  },
+  "orientation": "portrait",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "additionalTrustedOrigins": [],
+  "splashScreenFadeOutDuration": 300
+}

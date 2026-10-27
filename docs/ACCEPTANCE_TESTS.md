@@ -16,9 +16,10 @@ NOT IMPLEMENTED: no working implementation currently exists for that part.
 | Standalone `tsc --noEmit` | NOT RUN — no general command-execution tool available |
 | Vitest unit tests | NOT RUN — suite written, not executed |
 | Playwright/browser tests | NOT RUN — no browser-runner tool available |
-| Remote schema/RLS/Storage inspection | BLOCKED — credentials/export missing |
+| Remote schema/RLS/Storage inspection | VERIFIED — full catalog inspection incl. grants, publication, buckets, triggers (operator-run read-only queries, 2026-09-28) |
+| Migrations 0006/0007/0008 applied | VERIFIED — applied by operator in transactions; post-apply V1-V6 catalog checks all green |
 | Remote migration | NOT PERFORMED intentionally |
-| Two-browser realtime test | BLOCKED — missing public backend configuration, reviewed schema and test accounts |
+| Two-browser realtime test | READY TO RUN — backend configured, reviewed and migrated; still needs two dedicated confirmed test accounts |
 | Four-account isolation test | BLOCKED — missing reviewed backend and dedicated fixture accounts/data |
 
 ## Implemented automated suites

@@ -1,0 +1,195 @@
+# Builds the FEELINGS Android package (Trusted Web Activity) from the committed Bubblewrap
+# project in android-twa/ (gradle project + twa-manifest.json + manifest-checksum.txt are
+# generated with `bubblewrap update` and committed, so the CI build is fully non-interactive).
+#
+# Produces:
+#   app-release-signed.apk   -> Bazaar (and direct sideload for testing)
+#   app-release-bundle.aab   -> Google Play Console
+#
+# signing_mode:
+#   test  -> signs with a THROWAWAY key generated inside the runner. The APK installs on any
+#            phone for internal testing, but it must NEVER be uploaded to a store, and the
+#            TWA shows a browser address bar (assetlinks won't match the throwaway key).
+#   store -> signs with the real upload key from repository secrets. This is the only mode
+#            whose output may go to Bazaar / Google Play. Required secrets:
+#              ANDROID_KEYSTORE_BASE64    base64 of feelings.keystore
+#              ANDROID_KEYSTORE_PASSWORD  keystore password
+#              ANDROID_KEY_PASSWORD       key password (same as keystore password if you
+#                                         followed docs/ANDROID_RELEASE.md section 2)
+#              ANDROID_KEY_ALIAS          key alias (default: feelings)
+#
+# The real key is created ONCE on a trusted machine (scripts/make-signing-key.sh) and is
+# never committed. Losing it means losing the ability to update the store listings.
+#
+# IMPORTANT: never edit android-twa/twa-manifest.json in CI or by hand without regenerating
+# manifest-checksum.txt (`sha1sum` of the manifest, hex only) — a mismatch makes bubblewrap
+# prompt for a project update and the CI build hangs/fails.
+#
+# Triggers: manual (workflow_dispatch, choose the mode) and automatic on changes under
+# android-twa/ of the working branch (always test mode). Artifacts are attached to the run
+# as "feelings-android-<mode>".
+name: Android TWA package
+
+on:
+  workflow_dispatch:
+    inputs:
+      signing_mode:
+        description: "test = throwaway key (sideload only) | store = real upload key (Bazaar/Play)"
+        required: true
+        type: choice
+        default: test
+        options:
+          - test
+          - store
+  push:
+    branches: [arena/01a0e90b-feelings-web]
+    paths: ['android-twa/**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # Android SDK is preinstalled on GitHub-hosted ubuntu runners
+    permissions:
+      contents: write # needed to publish release-artifacts/ back to the working branch
+    defaults:
+      run:
+        working-directory: android-twa
+    env:
+      SIGNING_MODE: ${{ inputs.signing_mode || 'test' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Require signing secrets (store mode)
+        if: env.SIGNING_MODE == 'store'
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::error::signing_mode=store but ANDROID_KEYSTORE_BASE64 secret is missing."
+            echo "Create the key once (docs/ANDROID_RELEASE.md section 2), then run scripts/set-signing-secrets.sh."
+            exit 1
+          fi
+
+      - name: Prepare throwaway test key
+        if: env.SIGNING_MODE == 'test'
+        run: |
+          keytool -genkeypair -v \
+            -keystore feelings-test.keystore -alias feelings-test \
+            -keyalg RSA -keysize 2048 -validity 7 \
+            -storepass bubblewrap-test -keypass bubblewrap-test \
+            -dname "CN=FEELINGS CI Test Key, O=Throwaway, C=US"
+          echo "KEY_PATH=feelings-test.keystore" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=feelings-test" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=bubblewrap-test" >> "$GITHUB_ENV"
+
+      - name: Restore real signing key
+        if: env.SIGNING_MODE == 'store'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > feelings.keystore
+          test -s feelings.keystore
+          echo "KEY_PATH=feelings.keystore" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=${ANDROID_KEY_ALIAS:-feelings}" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+
+      - name: Configure Bubblewrap to use the runner JDK and Android SDK (no prompts)
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK"
+          # Bubblewrap 1.x validates the SDK root by looking for tools/ or bin/. Modern SDKs
+          # ship neither (sdkmanager lives in cmdline-tools/latest/bin), so bridge it.
+          if [ ! -e "$SDK/bin" ] && [ ! -e "$SDK/tools" ] && [ -d "$SDK/cmdline-tools/latest/bin" ]; then
+            ln -sfn "$SDK/cmdline-tools/latest/bin" "$SDK/bin"
+          fi
+          node -e '
+            const fs=require("fs"),path=require("path");
+            const cfg={jdkPath:process.env.JAVA_HOME,androidSdkPath:process.argv[1]};
+            fs.writeFileSync(path.join(process.env.HOME,".bubblewrap","config.json"),JSON.stringify(cfg,null,2));
+            console.log("bubblewrap config:",cfg);
+          ' "$SDK"
+
+      - name: Build APK and AAB with Bubblewrap (non-interactive)
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ env.KEY_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+        run: |
+          java -version 2>&1 | head -1
+          echo "JAVA_HOME=$JAVA_HOME  ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          npm install -g @bubblewrap/cli@1.25.0
+          code=0
+          bubblewrap build \
+            --skipPwaValidation \
+            --skipVersionUpgrade \
+            --signingKeyPath "$KEY_PATH" \
+            --signingKeyAlias "$KEY_ALIAS" >build.log 2>&1 || code=$?
+          cat build.log
+          if [ $code -ne 0 ]; then
+            MSG=$(tail -n 60 build.log | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+            echo "::error::bubblewrap build failed (exit $code). Log tail:%0A$MSG"
+            exit $code
+          fi
+          ls -la app-release-signed.apk app-release-bundle.aab
+
+      - name: Print upload-key fingerprint for assetlinks.json (store mode)
+        if: env.SIGNING_MODE == 'store'
+        run: |
+          echo "Put the SHA256 value below into public/.well-known/assetlinks.json and redeploy:"
+          keytool -list -v -keystore "$KEY_PATH" -alias "$KEY_ALIAS" \
+            -storepass "$BUBBLEWRAP_KEYSTORE_PASSWORD" | grep -i 'SHA256' || true
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ env.KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feelings-android-${{ env.SIGNING_MODE }}
+          path: |
+            android-twa/app-release-signed.apk
+            android-twa/app-release-bundle.aab
+
+      # Also commit the artifacts to the working branch under release-artifacts/ so they can
+      # be fetched over plain git (the Actions blob host is unreachable from some sandboxes).
+      # This folder is gitignored locally and removed before the branch is merged to main.
+      - name: Publish artifacts to the working branch
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p release-artifacts
+          cp android-twa/app-release-signed.apk android-twa/app-release-bundle.aab release-artifacts/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$GITHUB_REF_NAME"
+          git checkout -B artifacts-publish "origin/$GITHUB_REF_NAME"
+          git add -f release-artifacts
+          if git commit -m "release-artifacts: $SIGNING_MODE build (run $GITHUB_RUN_NUMBER)"; then
+            git push origin "HEAD:$GITHUB_REF_NAME" || \
+              echo "::warning::Could not push artifacts to the branch (it moved). Artifacts are still downloadable from this run's summary."
+          else
+            echo "Artifacts unchanged; nothing to commit."
+          fi
+
+      # On failure, publish the raw build log to the branch so it can be read via git
+      # even when the Actions log host is unreachable.
+      - name: Publish build log on failure
+        if: failure()
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$GITHUB_REF_NAME"
+          git checkout -B artifacts-publish "origin/$GITHUB_REF_NAME"
+          mkdir -p release-artifacts
+          cp android-twa/build.log release-artifacts/last-build.log 2>/dev/null || echo "no build.log" > release-artifacts/last-build.log
+          git add -f release-artifacts/last-build.log
+          git commit -m "ci: publish failed TWA build log (run $GITHUB_RUN_NUMBER)" && \
+            git push origin "HEAD:$GITHUB_REF_NAME" || echo "::warning::could not publish failure log"

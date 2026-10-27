@@ -7,3 +7,24 @@ playwright-report/
 test-results/
 coverage/
 supabase-inspection.json
+
+# Android signing keys — NEVER commit
+*.keystore
+*.jks
+*.keystore.asc
+
+# Bubblewrap build outputs (the generated gradle project itself IS committed)
+android-twa/app/build/
+android-twa/.gradle/
+android-twa/build/
+android-twa/local.properties
+android-twa/app-release-*.apk
+android-twa/app-release-*.aab
+android-twa/app-release-unsigned-aligned.apk
+android-twa/build.log
+
+# Local deploy bundle (Netlify Drop)
+feelings-web-netlify.zip
+
+# CI-published build artifacts (fetched via git, deleted before merge to main)
+release-artifacts/

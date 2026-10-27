@@ -3,6 +3,9 @@
 ## Read this status first
 This repository is the current WEB product implementation and an explicit integration contract. It is NOT a verified complete backend source of truth yet: remote schema/RLS/Auth/Storage/Realtime are BLOCKED pending credentials and inspection. Do not assume the expected table/RPC names already match the live Supabase project. Resolve these blockers on Web and update this handoff before locking an Android production contract.
 
+The web app is installable as a PWA (manifest, icons, shell service worker) since 2026-09-28. That does not replace the native plan: a PWA has no store presence, no background push and lives under browser storage/WebView rules. ## Platform strategy (owner decision, 2026-09-28)
+Android reaches Google Play and Bazaar now through a Trusted Web Activity that wraps the deployed, verified PWA (config in `android-twa/twa-manifest.json`, build via `.github/workflows/android-twa.yml`, full runbook in `docs/ANDROID_RELEASE.md`). iOS is intentionally PWA-only (Add to Home Screen) and will not get an App Store listing. The TWA is a distribution bridge, not the native product: it carries no offline business data and no background push.
+
 Build Android natively with Kotlin and Jetpack Compose in a later separate project. Do not attempt to convert React/CSS into an APK or package a fake Android Web wrapper. No Android code was created here.
 
 ## Product

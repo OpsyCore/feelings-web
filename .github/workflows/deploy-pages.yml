@@ -1,0 +1,54 @@
+# Deploys the FEELINGS web app (PWA) to GitHub Pages — free hosting, no Netlify credits.
+# Site URL: https://opsycore.github.io/feelings-web/
+# Every push that touches web files redeploys automatically; the Android TWA build
+# (android-twa.yml) is independent and triggered by changes under android-twa/.
+name: Deploy web app (GitHub Pages)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [arena/01a0e90b-feelings-web, main]
+    paths-ignore:
+      - 'android-twa/**'
+      - 'docs/**'
+      - 'store/**'
+      - '.github/workflows/android-twa.yml'
+      - '.github/workflows/keep-alive.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx --no-install tsc --noEmit
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+# trigger: pages go-live (repo public + Pages source = GitHub Actions)
+# deploy trigger 20261024-1720

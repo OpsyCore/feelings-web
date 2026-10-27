@@ -1,0 +1,42 @@
+# Best-effort keep-alive for the free-tier Supabase project.
+#
+# Free projects are paused after roughly a week of inactivity; a paused project rejects
+# every API call, which the web app surfaces as the localized "projectPaused" category.
+# Any request counts as activity, so this workflow pings the project every three days.
+# It also fails loudly when the project answers that it is paused, so the pause shows up
+# as a GitHub notification instead of a mystery login failure.
+#
+# Scheduled runs and manual dispatch both require the workflow to exist on the repository's
+# default branch, so this only activates after the branch is merged into main.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: '17 3 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Auth, REST and Storage endpoints
+        env:
+          SUPABASE_URL: https://wsyfeitsqrxmvrjrghey.supabase.co
+          # Public publishable key; override with a repository variable when rotating.
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_yutqaxOvWfY3ESICUR9XVw_9Gfow9r4' }}
+        run: |
+          set -uo pipefail
+          fail=0
+          for path in "auth/v1/settings" "rest/v1/profiles?select=id&limit=1" "storage/v1/bucket"; do
+            code=$(curl -sS -o body.json -w '%{http_code}' --max-time 30 "$SUPABASE_URL/$path" \
+              -H "apikey: $SUPABASE_PUBLISHABLE_KEY" || echo 000)
+            echo "$path -> $code"
+            if grep -qi 'paused' body.json 2>/dev/null; then
+              echo "::error::FEELINGS Supabase project reports PAUSED. Resume it from the Supabase dashboard; data is safe."
+              fail=1
+            elif [ "$code" = "000" ]; then
+              echo "::warning::no response from $path (network?)"
+            fi
+          done
+          if [ "$fail" = "1" ]; then exit 1; fi
+          echo "project answered; activity recorded"
